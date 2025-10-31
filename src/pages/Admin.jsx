@@ -1,0 +1,674 @@
+import { useState, useEffect } from 'react';
+import { useSelector, useDispatch } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
+import { Edit, Trash2, Plus, X, Save, Shield, AlertTriangle } from 'lucide-react';
+import userService from '../services/userService';
+import claimService from '../services/claimService';
+import authService from '../services/authService';
+import { logout } from '../store/slices/authSlice';
+
+const Admin = () => {
+  const { user, isAuthenticated } = useSelector((state) => state.auth);
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const [users, setUsers] = useState([]);
+  const [logs, setLogs] = useState([]);
+  const [pendingClaims, setPendingClaims] = useState([]);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [notification, setNotification] = useState(null);
+
+  // Check admin access and fetch users
+  useEffect(() => {
+    if (!isAuthenticated) {
+      showNotification('Please log in to access the admin panel.', 'error');
+      navigate('/login');
+      return;
+    }
+    
+    if (user?.role !== 'admin') {
+      showNotification('Admin access required. Please contact an administrator.', 'error');
+      return;
+    }
+    
+    fetchUsers();
+    fetchLogs();
+    fetchPendingClaims();
+  }, [isAuthenticated, user, navigate]);
+
+  const fetchUsers = async () => {
+    try {
+      const response = await userService.getAllUsers();
+      if (response.users) {
+        setUsers(response.users);
+      }
+    } catch (error) {
+      console.error('Error fetching users:', error);
+      showNotification(error.message, 'error');
+    }
+  };
+
+  const fetchLogs = async () => {
+    try {
+      const logService = (await import('../services/logService')).default;
+      const recent = await logService.getRecentLogs(20);
+      setLogs(recent);
+    } catch (error) {
+      console.error('Error fetching logs:', error);
+      // Do not show notification here to avoid spamming on non-admin
+    }
+  };
+
+  const fetchPendingClaims = async () => {
+    try {
+      const data = await claimService.getClaims({ status: 'pending' });
+      setPendingClaims(data);
+    } catch (error) {
+      console.error('Error fetching pending claims:', error);
+    }
+  };
+
+  const clearLogs = async () => {
+    try {
+      const logService = (await import('../services/logService')).default;
+      // 1) Export all logs as CSV and trigger browser download
+      const { blob, filename } = await logService.exportAllLogsAsBlob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+      }, 0);
+
+      // 2) After successful download, clear logs on the server
+      try {
+        await authService.api.delete('/logs');
+        setLogs([]);
+        showNotification('Logs exported and cleared');
+      } catch (clearErr) {
+        console.error('Error clearing logs after export:', clearErr);
+        const message = clearErr?.response?.data?.message || clearErr.message || 'Logs exported, but failed to clear on server';
+        showNotification(message, 'error');
+      }
+    } catch (error) {
+      console.error('Error exporting logs:', error);
+      const message = error?.response?.data?.message || error.message || 'Failed to export logs';
+      showNotification(message, 'error');
+    }
+  };
+
+  const handleApproveClaim = async (id) => {
+    try {
+      await claimService.approveClaim(id);
+      showNotification(`Claim #${id} approved`);
+      setPendingClaims(pendingClaims.filter(c => c.id !== id));
+    } catch (error) {
+      console.error('Error approving claim:', error);
+      showNotification(error.message, 'error');
+    }
+  };
+
+  const handleRejectClaim = async (id) => {
+    try {
+      let reason = '';
+      while (true) {
+        reason = window.prompt('Enter rejection reason (mandatory):', reason || '') || '';
+        if (reason && reason.trim()) break;
+        const retry = window.confirm('Rejection reason is required. Do you want to try again?');
+        if (!retry) return; // Abort rejection if user cancels
+      }
+      await claimService.rejectClaim(id, reason.trim());
+      showNotification(`Claim #${id} rejected`);
+      setPendingClaims(pendingClaims.filter(c => c.id !== id));
+    } catch (error) {
+      console.error('Error rejecting claim:', error);
+      const message = error?.response?.data?.message || error.message || 'Failed to reject claim';
+      showNotification(message, 'error');
+    }
+  };
+
+  const showNotification = (message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleEditUser = (user) => {
+    setEditingUser({ ...user });
+    setIsEditModalOpen(true);
+  };
+
+  const handleSaveUser = async () => {
+    try {
+      const gpid = String(editingUser.gram_panchayat_id || '').trim();
+      if (!gpid) {
+        showNotification('Gram Panchayat ID is required', 'error');
+        return;
+      }
+      if (!/^[A-Za-z0-9]+$/.test(gpid) || gpid.length < 10) {
+        showNotification('Gram Panchayat ID must be alphanumeric and at least 10 characters long', 'error');
+        return;
+      }
+      await userService.updateUser(editingUser.id, { ...editingUser, gram_panchayat_id: gpid });
+      setUsers(users.map(u => u.id === editingUser.id ? { ...editingUser, gram_panchayat_id: gpid } : u));
+      setIsEditModalOpen(false);
+      setEditingUser(null);
+      showNotification('User updated successfully');
+    } catch (error) {
+      console.error('Error updating user:', error);
+      showNotification(error.message, 'error');
+    }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    if (window.confirm('Are you sure you want to delete this user?')) {
+      try {
+        await userService.deleteUser(userId);
+        setUsers(users.filter(u => u.id !== userId));
+        showNotification('User deleted successfully');
+      } catch (error) {
+        console.error('Error deleting user:', error);
+        showNotification(error.message, 'error');
+      }
+    }
+  };
+
+  const handleAddUser = async (newUser) => {
+    try {
+      // Register via auth to follow the same signup rules (phone, password hashing, validations)
+      const phoneDigits = String(newUser.phone || '').replace(/\D/g, '');
+      if (!phoneDigits || phoneDigits.length < 10 || phoneDigits.length > 11) {
+        showNotification('Phone number must be 10 or 11 digits', 'error');
+        return;
+      }
+      if (!newUser.password || newUser.password.length < 8) {
+        showNotification('Password must be at least 8 characters long', 'error');
+        return;
+      }
+      if (!newUser.state || !['MP','TR','OD','TL'].includes(newUser.state)) {
+        showNotification('Please select a valid state', 'error');
+        return;
+      }
+      if (!newUser.district || !newUser.village) {
+        showNotification('District and village are required', 'error');
+        return;
+      }
+      const gpid = String(newUser.gram_panchayat_id || '').trim();
+      if (!gpid) {
+        showNotification('Gram Panchayat ID is required', 'error');
+        return;
+      }
+      if (!/^[A-Za-z0-9]+$/.test(gpid) || gpid.length < 10) {
+        showNotification('Gram Panchayat ID must be alphanumeric and at least 10 characters long', 'error');
+        return;
+      }
+
+      const reg = await authService.register({
+        name: newUser.name,
+        email: newUser.email,
+        password: newUser.password,
+        phone: phoneDigits,
+        state: newUser.state,
+        district: newUser.district,
+        village: newUser.village,
+        gram_panchayat_id: gpid,
+      });
+
+      // If admin selected a role other than 'user', update it
+      if (newUser.role && newUser.role !== 'user' && reg?.id) {
+        try {
+          await userService.updateUser(reg.id, {
+            id: reg.id,
+            name: newUser.name,
+            email: newUser.email,
+            role: newUser.role,
+            state: newUser.state || 'Not specified',
+            district: newUser.district || '',
+            village: newUser.village || '',
+            phone: phoneDigits,
+            gram_panchayat_id: gpid,
+          });
+        } catch (e) {
+          console.warn('Role update failed for new user, leaving as default user role.', e);
+        }
+      }
+
+      await fetchUsers();
+      setIsAddModalOpen(false);
+      showNotification('User added successfully');
+    } catch (error) {
+      console.error('Error adding user:', error);
+      showNotification(error.message, 'error');
+    }
+  };
+
+  // If not authenticated or not admin, show access denied
+  if (!isAuthenticated || user?.role !== 'admin') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-8 text-center">
+          <div className="mb-4">
+            <Shield className="h-16 w-16 text-red-500 mx-auto" />
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">Access Restricted</h2>
+          <p className="text-gray-600 mb-6">
+            {!isAuthenticated 
+              ? 'You need to log in to access the admin panel.' 
+              : 'Admin privileges are required to access this section.'}
+          </p>
+          <div className="space-y-3">
+            {!isAuthenticated ? (
+              <button
+                onClick={() => navigate('/login')}
+                className="w-full bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600"
+              >
+                Go to Login
+              </button>
+            ) : (
+              <p className="text-sm text-gray-500">
+                Please contact an administrator for access.
+              </p>
+            )}
+            <button
+              onClick={() => navigate('/dashboard')}
+              className="w-full bg-gray-300 text-gray-700 px-4 py-2 rounded-md hover:bg-gray-400"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* Notification */}
+      {notification && (
+        <div className={`fixed top-20 right-4 p-4 rounded-md shadow-lg z-[12000] ${
+          notification.type === 'error' ? 'bg-red-500 text-white' : 'bg-green-500 text-white'
+        }`}>
+          {notification.message}
+        </div>
+      )}
+
+      <div className="mb-8">
+        <div className="flex justify-between items-center">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Panel</h1>
+          <button
+            onClick={() => setIsAddModalOpen(true)}
+            className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 flex items-center"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add User
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="space-y-8">
+          <div className="bg-white p-6 rounded shadow">
+            <h2 className="text-xl font-semibold mb-4">Claim Moderation</h2>
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-sm text-gray-600">Review and decide on pending claims</p>
+              <button onClick={fetchPendingClaims} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="p-2 text-left">ID</th>
+                    <th className="p-2 text-left">Claimant</th>
+                    <th className="p-2 text-left">Village</th>
+                    <th className="p-2 text-left">State</th>
+                    <th className="p-2 text-left">Submitted</th>
+                    <th className="p-2 text-left">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingClaims.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="p-4 text-center text-gray-500">
+                        No pending claims.
+                      </td>
+                    </tr>
+                  ) : (
+                    pendingClaims.map(c => (
+                      <tr key={c.id} className="border-t">
+                        <td className="p-2">{c.id}</td>
+                        <td className="p-2">{c.claimantName || '-'}</td>
+                        <td className="p-2">{c.village || '-'}</td>
+                        <td className="p-2">{c.state || '-'}</td>
+                        <td className="p-2">{c.submissionDate || '-'}</td>
+                        <td className="p-2 space-x-2">
+                          <button onClick={() => handleApproveClaim(c.id)} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Approve</button>
+                          <button onClick={() => handleRejectClaim(c.id)} className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Reject</button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded shadow">
+            <h2 className="text-xl font-semibold mb-4">User Management</h2>
+            <table className="w-full">
+            <thead>
+              <tr className="bg-gray-50">
+                <th className="p-2 text-left">Name</th>
+                <th className="p-2 text-left">Role</th>
+                <th className="p-2 text-left">Email</th>
+                <th className="p-2 text-left">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan="4" className="p-4 text-center text-gray-500">
+                    No users found. Click "Add User" to create one.
+                  </td>
+                </tr>
+              ) : (
+                users.map(user => (
+                  <tr key={user.id} className="border-t">
+                    <td className="p-2">{user.name}</td>
+                    <td className="p-2">{user.role}</td>
+                    <td className="p-2">{user.email}</td>
+                    <td className="p-2">
+                      <button
+                        onClick={() => handleEditUser(user)}
+                        className="text-blue-500 hover:text-blue-700 mr-3 p-1"
+                        title="Edit User"
+                      >
+                        <Edit className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(user.id)}
+                        className="text-red-500 hover:text-red-700 p-1"
+                        title="Delete User"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded shadow">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">System Logs</h2>
+            <div className="space-x-2">
+              <button onClick={fetchLogs} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
+              <button onClick={clearLogs} className="text-sm px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Clear Logs</button>
+            </div>
+          </div>
+          <div className="space-y-2 max-h-96 overflow-auto">
+            {logs.length === 0 ? (
+              <div className="text-gray-500">No logs found.</div>
+            ) : (
+              logs.map(log => (
+                <div key={log.id} className="border p-2 rounded">
+                  <div className="flex justify-between">
+                    <p>
+                      <strong>{log.action}</strong>
+                      {log.user_name || log.user_email ? (
+                        <span className="text-gray-600"> by {log.user_name || log.user_email}</span>
+                      ) : null}
+                      {log.entity_type && log.entity_id ? (
+                        <span className="text-gray-600"> on {log.entity_type} #{log.entity_id}</span>
+                      ) : null}
+                    </p>
+                    <span className="text-sm text-gray-600">{(() => { const s = log.created_at_iso || log.created_at; if (!s) return '-'; const iso = typeof s === 'string' ? s.replace(/\.(\d{3})\d+Z$/, '.$1Z') : s; const d = new Date(iso); return isNaN(d) ? String(s) : d.toLocaleString(); })()}</span>
+                  </div>
+                  {log.details && (
+                    <pre className="mt-1 text-xs bg-gray-50 p-2 rounded overflow-auto">{(() => { try { return JSON.stringify(JSON.parse(log.details), null, 2); } catch { return String(log.details); } })()}</pre>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Edit User Modal */}
+      {isEditModalOpen && editingUser && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Edit User</h3>
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">Name</label>
+                <input
+                  type="text"
+                  value={editingUser.name}
+                  onChange={(e) => setEditingUser({...editingUser, name: e.target.value})}
+                  className="w-full border rounded-md px-3 py-2"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Role</label>
+                <select
+                  value={editingUser.role}
+                  onChange={(e) => setEditingUser({...editingUser, role: e.target.value})}
+                  className="w-full border rounded-md px-3 py-2"
+                >
+                  <option value="user">User</option>
+                  <option value="admin">Admin</option>
+                  <option value="Gram Sabha">Gram Sabha</option>
+                  <option value="District Officer">District Officer</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Gram Panchayat ID</label>
+                <input
+                  type="text"
+                  value={editingUser.gram_panchayat_id || ''}
+                  onChange={(e) => setEditingUser({...editingUser, gram_panchayat_id: e.target.value})}
+                  className="w-full border rounded-md px-3 py-2"
+                  placeholder="Alphanumeric, min 10 chars"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Email</label>
+                <input
+                  type="email"
+                  value={editingUser.email}
+                  onChange={(e) => setEditingUser({...editingUser, email: e.target.value})}
+                  className="w-full border rounded-md px-3 py-2"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end space-x-2 mt-6">
+              <button
+                onClick={() => setIsEditModalOpen(false)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveUser}
+                className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 flex items-center"
+              >
+                <Save className="h-4 w-4 mr-2" />
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add User Modal */}
+      {isAddModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-96">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add New User</h3>
+              <button
+                onClick={() => setIsAddModalOpen(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form className="text-gray-900 dark:text-gray-100" onSubmit={(e) => {
+              e.preventDefault();
+              const formData = new FormData(e.target);
+              const newUser = {
+                name: formData.get('name'),
+                role: formData.get('role'),
+                email: formData.get('email'),
+                phone: formData.get('phone'),
+                password: formData.get('password'),
+                state: formData.get('state'),
+                district: formData.get('district'),
+                village: formData.get('village')
+              };
+              handleAddUser(newUser);
+            }}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Name</label>
+                  <input
+                    type="text"
+                    name="name"
+                    required
+                    className="w-full border rounded-md px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Role</label>
+                  <select
+                    name="role"
+                    required
+                    className="w-full border rounded-md px-3 py-2"
+                  >
+                    <option value="">Select Role</option>
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                    <option value="Gram Sabha">Gram Sabha</option>
+                    <option value="District Officer">District Officer</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Email</label>
+                  <input
+                    type="email"
+                    name="email"
+                    required
+                    className="w-full border rounded-md px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Phone</label>
+                  <input
+                    type="tel"
+                    name="phone"
+                    required
+                    pattern="[0-9]{10,11}"
+                    title="Enter 10 or 11 digits"
+                    className="w-full border rounded-md px-3 py-2"
+                    placeholder="10 or 11 digits"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Password</label>
+                  <input
+                    type="password"
+                    name="password"
+                    required
+                    minLength="8"
+                    className="w-full border rounded-md px-3 py-2"
+                    placeholder="Minimum 8 characters"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Password must be at least 8 characters.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">State</label>
+                  <select
+                    name="state"
+                    required
+                    className="w-full border rounded-md px-3 py-2"
+                  >
+                    <option value="">Select State</option>
+                    <option value="MP">Madhya Pradesh</option>
+                    <option value="TR">Tripura</option>
+                    <option value="OD">Odisha</option>
+                    <option value="TL">Telangana</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">District</label>
+                  <input
+                    type="text"
+                    name="district"
+                    required
+                    className="w-full border rounded-md px-3 py-2"
+                    placeholder="District"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Village</label>
+                  <input
+                    type="text"
+                    name="village"
+                    required
+                    className="w-full border rounded-md px-3 py-2"
+                    placeholder="Village"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Gram Panchayat ID</label>
+                  <input
+                    type="text"
+                    name="gram_panchayat_id"
+                    required
+                    pattern="[A-Za-z0-9]{10,}"
+                    title="Alphanumeric, minimum 10 characters"
+                    className="w-full border rounded-md px-3 py-2"
+                    placeholder="Alphanumeric, min 10 chars"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end space-x-2 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setIsAddModalOpen(false)}
+                  className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 flex items-center"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add User
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Admin;

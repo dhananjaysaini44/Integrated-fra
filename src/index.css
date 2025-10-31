@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ensure map popups/toolbars appear above navbar and other overlays */
+.leaflet-popup-pane,
+.leaflet-draw-tooltip,
+.leaflet-draw-toolbar,
+.leaflet-draw,
+.leaflet-control-container {
+  z-index: 12000 !important;
+}
+
+/* Optional: make Leaflet popup content readable in dark mode */
+:root.dark .leaflet-popup-content-wrapper,
+:root.dark .leaflet-popup-tip {
+  background: #1f2937; /* gray-800 */
+  color: #f3f4f6;      /* gray-100 */
+}
+
+/* Ensure generic fixed modals can be forced above navbar if needed */
+.modal-overlay-high {
+  z-index: 12000;
+}
+
+ /* In dark mode, ensure text inside white panels uses dark foreground for contrast */
+:root.dark .bg-white {
+  color: #111827; /* gray-900 */
+}
