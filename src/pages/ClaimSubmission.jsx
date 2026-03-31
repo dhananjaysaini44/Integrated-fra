@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
+import { useDispatch } from 'react-redux';
 import { MapContainer, TileLayer, FeatureGroup } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
 import { FileText, MapPin, Upload, CheckCircle, ArrowLeft, ArrowRight } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
-import claimService from '../services/claimService';
+import { submitClaimWithDocs } from '../store/slices/claimsSlice';
 
 const ClaimSubmission = () => {
   const [step, setStep] = useState(1);
@@ -14,6 +15,7 @@ const ClaimSubmission = () => {
   const [polygonData, setPolygonData] = useState(null);
   const { register, handleSubmit, watch, formState: { errors } } = useForm();
   const navigate = useNavigate();
+  const dispatch = useDispatch();
 
   const steps = [
     { id: 1, title: 'Basic Information', icon: FileText },
@@ -28,14 +30,14 @@ const ClaimSubmission = () => {
       return;
     }
     try {
-      const created = await claimService.createClaimWithDocs({
+      const created = await dispatch(submitClaimWithDocs({
         claimantName: data.claimantName,
         village: data.village,
         state: data.state,
         district: data.district,
         polygon: polygonData,
         files: uploadedFiles,
-      });
+      })).unwrap();
       // Navigate to map focused on this claim
       navigate(`/map?claim=${created.id}`);
     } catch (e) {

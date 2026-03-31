@@ -1,26 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
 import { AlertTriangle, MapPin } from 'lucide-react';
-import alertsService from '../services/alertsService';
+import { clearAlertsError, fetchAlerts } from '../store/slices/alertsSlice';
 
 const Alerts = () => {
-  const [alerts, setAlerts] = useState([]);
   const [filter, setFilter] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const dispatch = useDispatch();
+  const { items: alerts, error, loading } = useSelector((state) => state.alerts);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const data = await alertsService.getAlerts();
-        setAlerts(data);
-      } catch (e) {
-        setError(e.message || 'Failed to fetch alerts');
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    dispatch(fetchAlerts());
+
+    return () => {
+      dispatch(clearAlertsError());
+    };
+  }, [dispatch]);
 
   const filteredAlerts = alerts.filter(alert =>
     (alert.type || '').toLowerCase().includes(filter.toLowerCase()) ||
