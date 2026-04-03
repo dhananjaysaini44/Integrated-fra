@@ -8,6 +8,7 @@ def _get(key: str, default: str) -> str:
 
 
 class PipelineConfig:
+    NLP_BACKEND = _get("NLP_BACKEND", "auto").strip().lower()
     NLP_MODEL_NAME = _get("NLP_MODEL_NAME", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
     NLP_MODEL_CACHE_DIR = _get("NLP_MODEL_CACHE_DIR", "./models/nlp")
     NLP_SIMILARITY_THRESHOLD = float(_get("NLP_SIMILARITY_THRESHOLD", "0.85"))
@@ -24,4 +25,3 @@ class PipelineConfig:
 
 
 config = PipelineConfig()
-

@@ -26,6 +26,10 @@ def load_nlp_model() -> str:
     global _MODEL, _USING_FALLBACK
     if _MODEL is not None or _USING_FALLBACK:
         return "fallback" if _USING_FALLBACK else "sentence-transformers"
+    if config.NLP_BACKEND == "fallback":
+        _MODEL = None
+        _USING_FALLBACK = True
+        return "fallback"
     try:
         from sentence_transformers import SentenceTransformer
         _MODEL = SentenceTransformer(config.NLP_MODEL_NAME, cache_folder=config.NLP_MODEL_CACHE_DIR)
@@ -48,4 +52,3 @@ def embed_text(text: str) -> List[float]:
 
 def model_backend() -> str:
     return "fallback" if _USING_FALLBACK or _MODEL is None else "sentence-transformers"
-

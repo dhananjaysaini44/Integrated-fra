@@ -15,6 +15,8 @@ services:
         value: "6"
       - key: TESSERACT_OEM
         value: "3"
+      - key: NLP_BACKEND
+        value: fallback
       - key: NLP_MODEL_NAME
         value: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
       - key: NLP_MODEL_CACHE_DIR
