@@ -1,15 +1,10 @@
-import { useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { setSelectedReport } from '../store/slices/reportsSlice';
 
 const Reports = () => {
-  const [reportData] = useState([
-    { month: 'Jan', claims: 20, approved: 15, rejected: 5 },
-    { month: 'Feb', claims: 25, approved: 20, rejected: 5 },
-    { month: 'Mar', claims: 30, approved: 25, rejected: 5 },
-    { month: 'Apr', claims: 35, approved: 28, rejected: 7 },
-  ]);
-
-  const [selectedReport, setSelectedReport] = useState('claims');
+  const dispatch = useDispatch();
+  const { reportData, selectedReport } = useSelector((state) => state.reports);
 
   const handleExport = (format) => {
     // Mock export
@@ -25,7 +20,7 @@ const Reports = () => {
       <div className="mb-4">
         <select
           value={selectedReport}
-          onChange={(e) => setSelectedReport(e.target.value)}
+          onChange={(e) => dispatch(setSelectedReport(e.target.value))}
           className="border p-2 rounded mr-4"
         >
           <option value="claims">Claims Report</option>

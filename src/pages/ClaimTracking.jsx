@@ -1,31 +1,34 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import claimService from '../services/claimService';
+import { useDispatch, useSelector } from 'react-redux';
+import { clearClaimsError, fetchClaims } from '../store/slices/claimsSlice';
 
 const ClaimTracking = () => {
-  const [claims, setClaims] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
+  const dispatch = useDispatch();
+  const { items: claims, loading, error } = useSelector((state) => state.claims);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const data = await claimService.getClaims();
-        setClaims(data);
-      } catch (e) {
-        setError(e.message || 'Failed to fetch claims');
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    dispatch(fetchClaims());
+
+    return () => {
+      dispatch(clearClaimsError());
+    };
+  }, [dispatch]);
 
   const filteredClaims = claims.filter(claim =>
     (claim.village || '').toLowerCase().includes(filter.toLowerCase()) ||
     (claim.status || '').toLowerCase().includes(filter.toLowerCase()) ||
     (claim.claimantName || '').toLowerCase().includes(filter.toLowerCase())
   );
+
+  const duplicateLabel = (claim) => {
+    const score = claim?.duplicateAnalysis?.duplicate_score || 0;
+    if (score >= 0.8) return { text: 'High duplicate risk', className: 'bg-red-100 text-red-800' };
+    if (score >= 0.5) return { text: 'Needs duplicate review', className: 'bg-amber-100 text-amber-800' };
+    if (claim.modelStatus === 'success') return { text: 'OCR reviewed', className: 'bg-green-100 text-green-800' };
+    return { text: 'No OCR result', className: 'bg-gray-100 text-gray-700' };
+  };
 
   return (
     <div>
@@ -46,6 +49,9 @@ const ClaimTracking = () => {
       {error && (
         <div className="mb-4 text-red-600">{error}</div>
       )}
+      {loading && (
+        <div className="mb-4 text-gray-600">Loading...</div>
+      )}
       <div className="bg-white shadow rounded">
         <table className="w-full">
           <thead>
@@ -53,6 +59,7 @@ const ClaimTracking = () => {
               <th className="p-4 text-left">ID</th>
               <th className="p-4 text-left">Village</th>
               <th className="p-4 text-left">Status</th>
+              <th className="p-4 text-left">OCR / Duplicate</th>
               <th className="p-4 text-left">Date</th>
               <th className="p-4 text-left">Actions</th>
             </tr>
@@ -69,6 +76,11 @@ const ClaimTracking = () => {
                     'bg-yellow-100 text-yellow-800'
                   }`}>
                     {claim.status}
+                  </span>
+                </td>
+                <td className="p-4">
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${duplicateLabel(claim).className}`}>
+                    {duplicateLabel(claim).text}
                   </span>
                 </td>
                 <td className="p-4">{claim.submissionDate || '-'}</td>

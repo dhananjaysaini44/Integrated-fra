@@ -20,6 +20,11 @@ dist-ssr
 .env.production.local
 backend/.env
 
+# Local databases and runtime uploads
+*.sqlite
+*.db
+backend/uploads/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -30,3 +35,14 @@ backend/.env
 *.njsproj
 *.sln
 *.sw?
+
+# Local project notes
+TODO.md
+replit.md
+.replit
+context.md
+agent-rules.md
+tasks.md
+ml_pipeline_reconciled.md
+algorand_integration.md
+project.md

@@ -1,53 +1,54 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { Edit, Trash2, Plus, X, Save, Shield, AlertTriangle } from 'lucide-react';
-import userService from '../services/userService';
-import claimService from '../services/claimService';
+import { AlertTriangle, Edit, Eye, Plus, Save, Shield, Trash2, X } from 'lucide-react';
 import authService from '../services/authService';
-import { logout } from '../store/slices/authSlice';
+import { approveClaim, clearClaimsError, fetchClaims, rejectClaim } from '../store/slices/claimsSlice';
+import { clearUsersError, deleteUser as deleteUserAction, fetchUsers, updateUser as updateUserAction } from '../store/slices/usersSlice';
 
 const Admin = () => {
   const { user, isAuthenticated } = useSelector((state) => state.auth);
+  const { items: users, error: usersError } = useSelector((state) => state.users);
+  const { items: claims, error: claimsError } = useSelector((state) => state.claims);
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const [users, setUsers] = useState([]);
   const [logs, setLogs] = useState([]);
-  const [pendingClaims, setPendingClaims] = useState([]);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [selectedClaim, setSelectedClaim] = useState(null);
   const [notification, setNotification] = useState(null);
+  const pendingClaims = claims.filter((claim) => String(claim.status || '').toLowerCase() === 'pending');
+
+  const getDuplicateSeverity = (claim) => {
+    const score = claim?.duplicateAnalysis?.duplicate_score || 0;
+    if (score >= 0.8) return { label: 'High risk', className: 'bg-red-100 text-red-800' };
+    if (score >= 0.5) return { label: 'Review', className: 'bg-amber-100 text-amber-800' };
+    return { label: 'Clear', className: 'bg-green-100 text-green-800' };
+  };
 
   // Check admin access and fetch users
   useEffect(() => {
-    if (!isAuthenticated) {
-      showNotification('Please log in to access the admin panel.', 'error');
-      navigate('/login');
-      return;
+    if (usersError) {
+      showNotification(usersError, 'error');
+      dispatch(clearUsersError());
     }
-    
-    if (user?.role !== 'admin') {
-      showNotification('Admin access required. Please contact an administrator.', 'error');
-      return;
-    }
-    
-    fetchUsers();
-    fetchLogs();
-    fetchPendingClaims();
-  }, [isAuthenticated, user, navigate]);
+  }, [dispatch, usersError]);
 
-  const fetchUsers = async () => {
+  useEffect(() => {
+    if (claimsError) {
+      showNotification(claimsError, 'error');
+      dispatch(clearClaimsError());
+    }
+  }, [claimsError, dispatch]);
+
+  const refreshUsers = useCallback(async () => {
     try {
-      const response = await userService.getAllUsers();
-      if (response.users) {
-        setUsers(response.users);
-      }
+      await dispatch(fetchUsers()).unwrap();
     } catch (error) {
       console.error('Error fetching users:', error);
-      showNotification(error.message, 'error');
     }
-  };
+  }, [dispatch]);
 
   const fetchLogs = async () => {
     try {
@@ -60,14 +61,30 @@ const Admin = () => {
     }
   };
 
-  const fetchPendingClaims = async () => {
+  const refreshPendingClaims = useCallback(async () => {
     try {
-      const data = await claimService.getClaims({ status: 'pending' });
-      setPendingClaims(data);
+      await dispatch(fetchClaims({ status: 'pending' })).unwrap();
     } catch (error) {
       console.error('Error fetching pending claims:', error);
     }
-  };
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      showNotification('Please log in to access the admin panel.', 'error');
+      navigate('/login');
+      return;
+    }
+
+    if (user?.role !== 'admin') {
+      showNotification('Admin access required. Please contact an administrator.', 'error');
+      return;
+    }
+
+    refreshUsers();
+    fetchLogs();
+    refreshPendingClaims();
+  }, [isAuthenticated, user, navigate, refreshPendingClaims, refreshUsers]);
 
   const clearLogs = async () => {
     try {
@@ -104,12 +121,11 @@ const Admin = () => {
 
   const handleApproveClaim = async (id) => {
     try {
-      await claimService.approveClaim(id);
+      await dispatch(approveClaim(id)).unwrap();
       showNotification(`Claim #${id} approved`);
-      setPendingClaims(pendingClaims.filter(c => c.id !== id));
     } catch (error) {
       console.error('Error approving claim:', error);
-      showNotification(error.message, 'error');
+      showNotification(error.message || String(error), 'error');
     }
   };
 
@@ -122,9 +138,8 @@ const Admin = () => {
         const retry = window.confirm('Rejection reason is required. Do you want to try again?');
         if (!retry) return; // Abort rejection if user cancels
       }
-      await claimService.rejectClaim(id, reason.trim());
+      await dispatch(rejectClaim({ id, reason: reason.trim() })).unwrap();
       showNotification(`Claim #${id} rejected`);
-      setPendingClaims(pendingClaims.filter(c => c.id !== id));
     } catch (error) {
       console.error('Error rejecting claim:', error);
       const message = error?.response?.data?.message || error.message || 'Failed to reject claim';
@@ -153,8 +168,10 @@ const Admin = () => {
         showNotification('Gram Panchayat ID must be alphanumeric and at least 10 characters long', 'error');
         return;
       }
-      await userService.updateUser(editingUser.id, { ...editingUser, gram_panchayat_id: gpid });
-      setUsers(users.map(u => u.id === editingUser.id ? { ...editingUser, gram_panchayat_id: gpid } : u));
+      await dispatch(updateUserAction({
+        id: editingUser.id,
+        userData: { ...editingUser, gram_panchayat_id: gpid },
+      })).unwrap();
       setIsEditModalOpen(false);
       setEditingUser(null);
       showNotification('User updated successfully');
@@ -167,8 +184,7 @@ const Admin = () => {
   const handleDeleteUser = async (userId) => {
     if (window.confirm('Are you sure you want to delete this user?')) {
       try {
-        await userService.deleteUser(userId);
-        setUsers(users.filter(u => u.id !== userId));
+        await dispatch(deleteUserAction(userId)).unwrap();
         showNotification('User deleted successfully');
       } catch (error) {
         console.error('Error deleting user:', error);
@@ -221,23 +237,26 @@ const Admin = () => {
       // If admin selected a role other than 'user', update it
       if (newUser.role && newUser.role !== 'user' && reg?.id) {
         try {
-          await userService.updateUser(reg.id, {
+          await dispatch(updateUserAction({
             id: reg.id,
-            name: newUser.name,
-            email: newUser.email,
-            role: newUser.role,
-            state: newUser.state || 'Not specified',
-            district: newUser.district || '',
-            village: newUser.village || '',
-            phone: phoneDigits,
-            gram_panchayat_id: gpid,
-          });
+            userData: {
+              id: reg.id,
+              name: newUser.name,
+              email: newUser.email,
+              role: newUser.role,
+              state: newUser.state || 'Not specified',
+              district: newUser.district || '',
+              village: newUser.village || '',
+              phone: phoneDigits,
+              gram_panchayat_id: gpid,
+            },
+          })).unwrap();
         } catch (e) {
           console.warn('Role update failed for new user, leaving as default user role.', e);
         }
       }
 
-      await fetchUsers();
+      await refreshUsers();
       setIsAddModalOpen(false);
       showNotification('User added successfully');
     } catch (error) {
@@ -315,7 +334,7 @@ const Admin = () => {
             <h2 className="text-xl font-semibold mb-4">Claim Moderation</h2>
             <div className="mb-4 flex items-center justify-between">
               <p className="text-sm text-gray-600">Review and decide on pending claims</p>
-              <button onClick={fetchPendingClaims} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
+              <button onClick={refreshPendingClaims} className="text-sm px-3 py-1 bg-gray-100 rounded hover:bg-gray-200">Refresh</button>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -325,6 +344,7 @@ const Admin = () => {
                     <th className="p-2 text-left">Claimant</th>
                     <th className="p-2 text-left">Village</th>
                     <th className="p-2 text-left">State</th>
+                    <th className="p-2 text-left">OCR Review</th>
                     <th className="p-2 text-left">Submitted</th>
                     <th className="p-2 text-left">Actions</th>
                   </tr>
@@ -332,7 +352,7 @@ const Admin = () => {
                 <tbody>
                   {pendingClaims.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="p-4 text-center text-gray-500">
+                      <td colSpan="7" className="p-4 text-center text-gray-500">
                         No pending claims.
                       </td>
                     </tr>
@@ -343,6 +363,23 @@ const Admin = () => {
                         <td className="p-2">{c.claimantName || '-'}</td>
                         <td className="p-2">{c.village || '-'}</td>
                         <td className="p-2">{c.state || '-'}</td>
+                        <td className="p-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${getDuplicateSeverity(c).className}`}>
+                              {getDuplicateSeverity(c).label}
+                            </span>
+                            {c.duplicateAnalysis && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedClaim(c)}
+                                className="text-blue-600 hover:text-blue-800"
+                                title="View OCR and duplicate analysis"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
                         <td className="p-2">{c.submissionDate || '-'}</td>
                         <td className="p-2 space-x-2">
                           <button onClick={() => handleApproveClaim(c.id)} className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Approve</button>
@@ -515,6 +552,104 @@ const Admin = () => {
         </div>
       )}
 
+      {selectedClaim && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
+          <div className="bg-white dark:bg-gray-800 dark:text-white p-6 rounded-lg w-full max-w-4xl max-h-[85vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">OCR and Duplicate Review</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Claim #{selectedClaim.id} for {selectedClaim.claimantName || 'Unknown claimant'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedClaim(null)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <div className="border rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    <h4 className="font-semibold">Duplicate Analysis</h4>
+                  </div>
+                  {selectedClaim.duplicateAnalysis ? (
+                    <div className="space-y-3 text-sm">
+                      <div className="flex items-center gap-3">
+                        <span className={`px-2 py-1 rounded text-xs font-medium ${getDuplicateSeverity(selectedClaim).className}`}>
+                          {getDuplicateSeverity(selectedClaim).label}
+                        </span>
+                        <span>Score: {selectedClaim.duplicateAnalysis.duplicate_score ?? 0}</span>
+                      </div>
+                      <p className="text-gray-700 dark:text-gray-300">
+                        {selectedClaim.duplicateAnalysis.explanation || 'No explanation available.'}
+                      </p>
+                      <div>
+                        <h5 className="font-medium mb-2">Matched Claim IDs</h5>
+                        <p className="text-gray-700 dark:text-gray-300">
+                          {selectedClaim.duplicateAnalysis.matched_claim_ids?.length
+                            ? selectedClaim.duplicateAnalysis.matched_claim_ids.join(', ')
+                            : 'None'}
+                        </p>
+                      </div>
+                      <div>
+                        <h5 className="font-medium mb-2">Candidate Matches</h5>
+                        <div className="space-y-2">
+                          {(selectedClaim.duplicateAnalysis.candidate_matches || []).map((match) => (
+                            <div key={match.claim_id} className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium">Claim #{match.claim_id}</span>
+                                <span className="text-xs">Score: {match.score}</span>
+                              </div>
+                              <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                                {match.reasons?.join(' ') || 'No reason text provided.'}
+                              </p>
+                            </div>
+                          ))}
+                          {(selectedClaim.duplicateAnalysis.candidate_matches || []).length === 0 && (
+                            <p className="text-gray-500">No candidate matches returned.</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500">No OCR/duplicate analysis found for this claim.</p>
+                  )}
+                </div>
+
+                <div className="border rounded-lg p-4">
+                  <h4 className="font-semibold mb-3">Extracted Fields</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    {Object.entries(selectedClaim.extractedFields || {})
+                      .filter(([key]) => key !== 'normalized')
+                      .map(([key, value]) => (
+                        <div key={key} className="bg-gray-50 dark:bg-gray-700 rounded p-3">
+                          <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">{key.replace(/_/g, ' ')}</p>
+                          <p className="text-gray-800 dark:text-gray-100 break-words">
+                            {Array.isArray(value) ? value.join(', ') : value || '-'}
+                          </p>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="border rounded-lg p-4">
+                <h4 className="font-semibold mb-3">OCR Text</h4>
+                <pre className="text-xs whitespace-pre-wrap break-words bg-gray-50 dark:bg-gray-700 rounded p-4 max-h-[60vh] overflow-auto">
+                  {selectedClaim.ocrText || 'No OCR text available.'}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add User Modal */}
       {isAddModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[12000]">
@@ -539,7 +674,8 @@ const Admin = () => {
                 password: formData.get('password'),
                 state: formData.get('state'),
                 district: formData.get('district'),
-                village: formData.get('village')
+                village: formData.get('village'),
+                gram_panchayat_id: formData.get('gram_panchayat_id')
               };
               handleAddUser(newUser);
             }}>

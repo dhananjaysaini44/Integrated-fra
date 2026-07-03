@@ -1,6 +1,31 @@
 import axios from 'axios';
 import { API_BASE_URL } from '../config/api';
 
+const safeJsonParse = (value, fallback) => {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const normalizeClaim = (claim) => {
+  const modelResult = safeJsonParse(claim.model_result, null);
+  return {
+    ...claim,
+    claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
+    claimantName: claim.claimant_name,
+    submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
+    documents: safeJsonParse(claim.documents, []),
+    polygon: safeJsonParse(claim.polygon, []),
+    modelResult,
+    modelStatus: claim.model_status || null,
+    duplicateAnalysis: modelResult?.duplicate_analysis || null,
+    extractedFields: modelResult?.extracted_fields || null,
+    ocrText: modelResult?.ocr_text || '',
+  };
+};
+
 class ClaimService {
   constructor() {
     this.api = axios.create({
@@ -28,14 +53,7 @@ class ClaimService {
       if (filters.search) params.append('search', filters.search);
       
       const response = await this.api.get(`/claims?${params.toString()}`);
-      return response.data.map(claim => ({
-        ...claim,
-        claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
-        claimantName: claim.claimant_name,
-        submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
-        documents: JSON.parse(claim.documents || '[]'),
-        polygon: JSON.parse(claim.polygon || '[]')
-      }));
+      return response.data.map(normalizeClaim);
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch claims');
     }
@@ -44,15 +62,7 @@ class ClaimService {
   async getClaimById(id) {
     try {
       const response = await this.api.get(`/claims/${id}`);
-      const claim = response.data;
-      return {
-        ...claim,
-        claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
-        claimantName: claim.claimant_name,
-        submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
-        documents: JSON.parse(claim.documents || '[]'),
-        polygon: JSON.parse(claim.polygon || '[]')
-      };
+      return normalizeClaim(response.data);
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Claim not found');
     }
@@ -72,15 +82,7 @@ class ClaimService {
       };
       
       const response = await this.api.post('/claims', payload);
-      const claim = response.data;
-      return {
-        ...claim,
-        claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
-        claimantName: claim.claimant_name,
-        submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
-        documents: JSON.parse(claim.documents || '[]'),
-        polygon: JSON.parse(claim.polygon || '[]')
-      };
+      return normalizeClaim(response.data);
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to create claim');
     }
@@ -101,17 +103,7 @@ class ClaimService {
       const response = await this.api.post('/claims/submit', form, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      const claim = response.data;
-      return {
-        ...claim,
-        claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
-        claimantName: claim.claimant_name,
-        submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
-        documents: JSON.parse(claim.documents || '[]'),
-        polygon: JSON.parse(claim.polygon || '[]'),
-        modelResult: claim.model_result ? JSON.parse(claim.model_result) : null,
-        modelStatus: claim.model_status || null
-      };
+      return normalizeClaim(response.data);
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to submit claim with documents');
     }
@@ -133,15 +125,7 @@ class ClaimService {
       };
       
       const response = await this.api.put(`/claims/${id}`, payload);
-      const claim = response.data;
-      return {
-        ...claim,
-        claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
-        claimantName: claim.claimant_name,
-        submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
-        documents: JSON.parse(claim.documents || '[]'),
-        polygon: JSON.parse(claim.polygon || '[]')
-      };
+      return normalizeClaim(response.data);
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to update claim');
     }
@@ -151,15 +135,7 @@ class ClaimService {
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       const response = await this.api.post(`/claims/${id}/approve`, { actor_user_id: user.id });
-      const claim = response.data;
-      return {
-        ...claim,
-        claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
-        claimantName: claim.claimant_name,
-        submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
-        documents: JSON.parse(claim.documents || '[]'),
-        polygon: JSON.parse(claim.polygon || '[]')
-      };
+      return normalizeClaim(response.data);
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to approve claim');
     }
@@ -169,15 +145,7 @@ class ClaimService {
     try {
       const user = JSON.parse(localStorage.getItem('user') || '{}');
       const response = await this.api.post(`/claims/${id}/reject`, { actor_user_id: user.id, reason });
-      const claim = response.data;
-      return {
-        ...claim,
-        claimId: `FRA-2024-${claim.id.toString().padStart(3, '0')}`,
-        claimantName: claim.claimant_name,
-        submissionDate: new Date(claim.created_at).toISOString().split('T')[0],
-        documents: JSON.parse(claim.documents || '[]'),
-        polygon: JSON.parse(claim.polygon || '[]')
-      };
+      return normalizeClaim(response.data);
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to reject claim');
     }
